@@ -74,6 +74,9 @@ cd dbt && dbt build --profiles-dir .
 
 Run it twice: the second run loads 0 files and applies 0 changes.
 
+`gold.fct_claims` is incremental. After changing its columns, or on a warehouse built before it
+became incremental, rebuild it once with `dbt build --full-refresh --profiles-dir .`.
+
 Sample output from `gold.mart_monthly_paid_by_specialty`:
 
 ```
@@ -122,7 +125,7 @@ tests/          pytest: CDC correctness against source truth, idempotency, SCD2,
 
 - [ ] Kafka (Debezium) source in place of JSONL batches
 - [ ] Iceberg table format for bronze
-- [ ] Incremental dbt models for `fct_claims`
+- [x] Incremental dbt model for `fct_claims` (rebuilds only claims whose claim, member history or provider changed)
 - [ ] Great Expectations style data docs for `audit.dq_results`
 
 ---
