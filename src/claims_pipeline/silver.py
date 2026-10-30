@@ -65,13 +65,14 @@ def _set_watermark(con: duckdb.DuckDBPyConnection, entity: str, seq: int) -> Non
 
 
 def _stage_latest(con: duckdb.DuckDBPyConnection, entity: str, key: str, select_sql: str,
-                  since: int) -> tuple[int, int]:
-    """Create temp table `stg_<entity>` with the latest change per key above `since`."""
+                  since: int, until: int | None = None) -> tuple[int, int]:
+    """Create temp table `stg_<entity>` with the latest change per key in (since, until]."""
+    upper = f"AND _seq <= {int(until)}" if until is not None else ""
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE stg_{entity} AS
         SELECT {select_sql}
         FROM bronze.{entity}
-        WHERE _seq > {int(since)}
+        WHERE _seq > {int(since)} {upper}
         QUALIFY row_number() OVER (PARTITION BY {key} ORDER BY _seq DESC) = 1""")
     n, max_seq = con.execute(
         f"SELECT count(*), coalesce(max(_seq), {int(since)}) FROM stg_{entity}").fetchall()[0]
@@ -120,7 +121,17 @@ def apply_claims(con: duckdb.DuckDBPyConnection, salt: str) -> SilverResult:
     return SilverResult("claims", n, max_seq)
 
 
+def _pending_batch_bounds(con: duckdb.DuckDBPyConnection, entity: str, since: int) -> list[int]:
+    """Upper `_seq` bound of each unprocessed source file, oldest first."""
+    rows = con.execute(f"""
+        SELECT max(_seq) FROM bronze.{entity} WHERE _seq > ?
+        GROUP BY _source_file ORDER BY 1""", [since]).fetchall()
+    return [r[0] for r in rows]
+
+
 def apply_members_scd2(con: duckdb.DuckDBPyConnection, salt: str) -> SilverResult:
+    """Apply member changes one source batch at a time so every batch-level
+    version is kept, even when several batches land between runs."""
     since = _watermark(con, "members")
     con.execute("SET VARIABLE salt = ?", [salt])
     select_sql = f"""
@@ -129,8 +140,10 @@ def apply_members_scd2(con: duckdb.DuckDBPyConnection, salt: str) -> SilverResul
         gender, {zip3_sql('zip_code')} AS zip3, state, plan_code, _op, _seq, _ts,
         md5(concat_ws('|', year(date_of_birth), gender, left(zip_code, 3), state, plan_code))
             AS attr_hash"""
-    n, max_seq = _stage_latest(con, "members", "member_id", select_sql, since)
-    if n:
+    total = 0
+    for until in _pending_batch_bounds(con, "members", since):
+        n, since = _stage_latest(con, "members", "member_id", select_sql, since, until)
+        total += n
         # 1. close the current version when the member was deleted or a tracked attribute changed
         con.execute("""
             UPDATE silver.member_history AS h
@@ -147,8 +160,8 @@ def apply_members_scd2(con: duckdb.DuckDBPyConnection, salt: str) -> SilverResul
             WHERE s._op <> 'D'
               AND NOT EXISTS (SELECT 1 FROM silver.member_history h
                               WHERE h.member_token = s.member_token AND h.is_current)""")
-    _set_watermark(con, "members", max_seq)
-    return SilverResult("members", n, max_seq)
+    _set_watermark(con, "members", since)
+    return SilverResult("members", total, since)
 
 
 def build_silver(con: duckdb.DuckDBPyConnection, salt: str) -> list[SilverResult]:
