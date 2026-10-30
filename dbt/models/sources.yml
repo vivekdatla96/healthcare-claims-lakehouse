@@ -1,0 +1,18 @@
+version: 2
+
+sources:
+  - name: silver
+    description: CDC-applied, PHI-tokenized tables maintained by the Python pipeline.
+    schema: silver
+    tables:
+      - name: claims
+        description: Current state of every non-voided claim.
+        columns:
+          - name: claim_id
+            tests: [unique, not_null]
+      - name: providers
+        columns:
+          - name: npi
+            tests: [unique, not_null]
+      - name: member_history
+        description: SCD Type 2 member attributes keyed by member_token.

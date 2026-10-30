@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: dim_provider
+    description: Current provider attributes.
+    columns:
+      - name: provider_npi
+        tests: [unique, not_null]
+
+  - name: dim_member_scd
+    description: Member history with effective windows for point-in-time joins.
+    columns:
+      - name: member_token
+        tests: [not_null]
+
+  - name: dim_member
+    description: Current member attributes. De-identified; no direct PHI.
+    columns:
+      - name: member_token
+        tests: [unique, not_null]
+      - name: age_band
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['0-17', '18-34', '35-49', '50-64', '65+']
+
+  - name: fct_claims
+    description: Claim grain fact table with point-in-time member attributes.
+    columns:
+      - name: claim_id
+        tests: [unique, not_null]
+      - name: claim_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['SUBMITTED', 'PENDED', 'PAID', 'DENIED']
+      - name: member_token
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_member')
+                field: member_token
+      - name: provider_npi
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_provider')
+                field: provider_npi
+      - name: plan_code_at_service
+        description: Null would mean the point-in-time join missed.
+        tests: [not_null]

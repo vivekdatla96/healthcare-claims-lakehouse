@@ -1,0 +1,18 @@
+name: claims_lakehouse
+version: "0.1.0"
+config-version: 2
+profile: claims_lakehouse
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  claims_lakehouse:
+    +materialized: table
+    gold:
+      +tags: ["gold"]
+    marts:
+      +tags: ["marts"]

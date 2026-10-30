@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: mart_monthly_paid_by_specialty
+    description: Monthly billed vs paid by provider specialty.
+  - name: mart_provider_denial_rates
+    description: Denial rate per provider over adjudicated claims.
+    columns:
+      - name: provider_npi
+        tests: [unique, not_null]
