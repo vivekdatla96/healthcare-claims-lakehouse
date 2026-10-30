@@ -22,6 +22,8 @@ from .phi import birth_year_sql, token_sql, zip3_sql
 
 log = logging.getLogger(__name__)
 
+SALT_SQL = "getvariable('salt')"
+
 
 @dataclass
 class SilverResult:
@@ -99,8 +101,8 @@ def apply_providers(con: duckdb.DuckDBPyConnection) -> SilverResult:
 def apply_claims(con: duckdb.DuckDBPyConnection, salt: str) -> SilverResult:
     since = _watermark(con, "claims")
     con.execute("SET VARIABLE salt = ?", [salt])
-    select_sql = (f"* EXCLUDE (member_id), "
-                  f"{token_sql('member_id', "getvariable('salt')")} AS member_token")
+    member_token = token_sql("member_id", SALT_SQL)
+    select_sql = f"* EXCLUDE (member_id), {member_token} AS member_token"
     n, max_seq = _stage_latest(con, "claims", "claim_id", select_sql, since)
     if n:
         con.execute("""
@@ -135,7 +137,7 @@ def apply_members_scd2(con: duckdb.DuckDBPyConnection, salt: str) -> SilverResul
     since = _watermark(con, "members")
     con.execute("SET VARIABLE salt = ?", [salt])
     select_sql = f"""
-        {token_sql('member_id', "getvariable('salt')")} AS member_token,
+        {token_sql('member_id', SALT_SQL)} AS member_token,
         {birth_year_sql('date_of_birth')} AS birth_year,
         gender, {zip3_sql('zip_code')} AS zip3, state, plan_code, _op, _seq, _ts,
         md5(concat_ws('|', year(date_of_birth), gender, left(zip_code, 3), state, plan_code))
