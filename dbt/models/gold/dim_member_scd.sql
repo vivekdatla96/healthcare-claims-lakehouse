@@ -3,7 +3,7 @@
 -- member's first load still resolve to a version.
 select
     member_token,
-    birth_year,
+    {{ safe_birth_year('birth_year') }} as birth_year,
     gender,
     zip3,
     state                as member_state,

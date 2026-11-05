@@ -23,7 +23,7 @@ flowchart LR
     S --> Q{Quality gate<br/>12 checks}
     Q -- fail --> X[Stop run<br/>audit.dq_results]
     Q -- pass --> G[Gold via dbt<br/>dims, fact, marts]
-    G --> T[dbt tests<br/>20 tests]
+    G --> T[dbt tests<br/>21 tests]
     subgraph Airflow DAG: claims_lakehouse_daily
       B
       S
@@ -47,13 +47,19 @@ Direct identifiers never leave bronze:
 | Source column | Silver / gold | Method |
 |---|---|---|
 | `member_id` | `member_token` | Salted SHA-256, deterministic so joins still work |
-| `date_of_birth` | `birth_year`, `age_band` | Generalized |
-| `zip_code` | `zip3` | Truncated (Safe Harbor style) |
+| `date_of_birth` | `birth_year`, `age_band` | Generalized; gold nulls `birth_year` for ages 90+ (Safe Harbor) |
+| `zip_code` | `zip3` | Truncated; the 17 sparsely populated prefixes become `000` (Safe Harbor) |
 | name, email, phone | dropped | |
 
-The salt comes from `CLAIMS_PHI_SALT` (in production: Key Vault / Secrets Manager). Two separate
-tests, one in Python and one in dbt, fail the build if an identifier column ever appears
-downstream.
+The salt comes from `CLAIMS_PHI_SALT` (in production: Key Vault / Secrets Manager). Without it
+the pipeline falls back to a public dev salt and logs a warning, because tokens made with a known
+salt can be reversed by hashing candidate member IDs. With `CLAIMS_ENV=prod` a missing or dev salt stops
+the run. Two separate tests, one in Python and one in dbt, fail the build if an identifier column
+ever appears downstream, and a dbt test fails if gold exposes a birth year for anyone aged 90+.
+
+On a warehouse built before zip3 masking, the next silver run masks the stored prefixes and
+recomputes the change hash for the affected member history, so no false SCD2 versions appear.
+The gold dimensions are full rebuilds, so the 90+ rule applies on the next `dbt build`.
 
 ## Quick start
 

@@ -131,17 +131,40 @@ def _pending_batch_bounds(con: duckdb.DuckDBPyConnection, entity: str, since: in
     return [r[0] for r in rows]
 
 
+def _member_attr_hash_sql(birth_year: str, zip3: str) -> str:
+    """Change-detection hash over the generalized member attributes. It must only
+    see values silver also stores, or it would leak the raw zip prefix."""
+    return f"md5(concat_ws('|', {birth_year}, gender, {zip3}, state, plan_code))"
+
+
+def migrate_member_generalization(con: duckdb.DuckDBPyConnection) -> int:
+    """Bring member history written before zip3 masking up to date: mask restricted
+    prefixes and recompute attr_hash, so unchanged members don't get a false new
+    version. Every input is already in silver; rows that are current are not touched."""
+    expected_hash = _member_attr_hash_sql("birth_year", zip3_sql("zip3"))
+    stale = con.execute(f"""
+        SELECT count(*) FROM silver.member_history
+        WHERE attr_hash IS DISTINCT FROM {expected_hash}""").fetchall()[0][0]
+    if stale:
+        con.execute(f"""
+            UPDATE silver.member_history
+            SET zip3 = {zip3_sql('zip3')}, attr_hash = {expected_hash}
+            WHERE attr_hash IS DISTINCT FROM {expected_hash}""")
+        log.info("silver.member_history: migrated %d rows to masked zip3", stale)
+    return stale
+
+
 def apply_members_scd2(con: duckdb.DuckDBPyConnection, salt: str) -> SilverResult:
     """Apply member changes one source batch at a time so every batch-level
     version is kept, even when several batches land between runs."""
+    migrate_member_generalization(con)
     since = _watermark(con, "members")
     con.execute("SET VARIABLE salt = ?", [salt])
     select_sql = f"""
         {token_sql('member_id', SALT_SQL)} AS member_token,
         {birth_year_sql('date_of_birth')} AS birth_year,
         gender, {zip3_sql('zip_code')} AS zip3, state, plan_code, _op, _seq, _ts,
-        md5(concat_ws('|', year(date_of_birth), gender, left(zip_code, 3), state, plan_code))
-            AS attr_hash"""
+        {_member_attr_hash_sql(birth_year_sql('date_of_birth'), zip3_sql('zip_code'))} AS attr_hash"""
     total = 0
     for until in _pending_batch_bounds(con, "members", since):
         n, since = _stage_latest(con, "members", "member_id", select_sql, since, until)
