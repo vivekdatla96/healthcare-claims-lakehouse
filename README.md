@@ -57,8 +57,9 @@ salt can be reversed by hashing candidate member IDs. With `CLAIMS_ENV=prod` a m
 the run. Two separate tests, one in Python and one in dbt, fail the build if an identifier column
 ever appears downstream, and a dbt test fails if gold exposes a birth year for anyone aged 90+.
 
-The zip3 and 90+ rules apply to newly processed data. On a warehouse built before them, rebuild
-once with `make clean all`.
+On a warehouse built before zip3 masking, the next silver run masks the stored prefixes and
+recomputes the change hash for the affected member history, so no false SCD2 versions appear.
+The gold dimensions are full rebuilds, so the 90+ rule applies on the next `dbt build`.
 
 ## Quick start
 
