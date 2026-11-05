@@ -24,3 +24,10 @@ def test_missing_salt_is_refused_in_production(monkeypatch, env):
     monkeypatch.setenv("CLAIMS_ENV", env)
     with pytest.raises(RuntimeError, match="CLAIMS_PHI_SALT must be set"):
         Settings.from_env()
+
+
+def test_public_dev_salt_is_refused_in_production(monkeypatch):
+    monkeypatch.setenv("CLAIMS_PHI_SALT", DEV_PHI_SALT)
+    monkeypatch.setenv("CLAIMS_ENV", "prod")
+    with pytest.raises(RuntimeError, match="CLAIMS_PHI_SALT must be set"):
+        Settings.from_env()
