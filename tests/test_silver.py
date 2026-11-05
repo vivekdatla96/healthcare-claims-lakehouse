@@ -96,3 +96,37 @@ def test_member_history_from_before_zip3_masking_is_migrated(con, source, landin
         FROM bronze.members WHERE member_id = ? ORDER BY _seq DESC LIMIT 1""", [member_id])
     build_silver(con, SALT)
     assert con.execute("SELECT count(*) FROM silver.member_history").fetchall()[0][0] == versions
+
+
+def _claim_status(con, claim_id):
+    return con.execute("SELECT claim_status, _seq FROM silver.claims WHERE claim_id = ?",
+                       [claim_id]).fetchall()[0]
+
+
+def _add_claim_event(con, claim_id, status, seq, source_file):
+    con.execute("""
+        INSERT INTO bronze.claims
+        SELECT * REPLACE ('U' AS _op, ? AS claim_status, ? AS _seq, ? AS _source_file)
+        FROM bronze.claims WHERE claim_id = ? ORDER BY _seq DESC LIMIT 1""",
+                [status, seq, source_file, claim_id])
+
+
+def test_latest_seq_wins_even_when_files_arrive_out_of_order(con, source, landing):
+    land(landing, 0, source.snapshot(10, 3, 30))
+    _run(con, landing)
+    top = con.execute("SELECT max(_seq) FROM bronze.claims").fetchall()[0][0]
+    # The newer event sits in the file that sorts first.
+    _add_claim_event(con, "C00000001", "DENIED", top + 2, "batch_9998.jsonl")
+    _add_claim_event(con, "C00000001", "PENDED", top + 1, "batch_9999.jsonl")
+    build_silver(con, SALT)
+    assert _claim_status(con, "C00000001") == ("DENIED", top + 2)
+
+
+def test_replayed_old_event_does_not_overwrite_newer_state(con, source, landing):
+    land(landing, 0, source.snapshot(10, 3, 30))
+    _run(con, landing)
+    before = _claim_status(con, "C00000001")
+    _add_claim_event(con, "C00000001", "DENIED", before[1], "replay.jsonl")
+    results = {r.entity: r.changes for r in build_silver(con, SALT)}
+    assert results["claims"] == 0
+    assert _claim_status(con, "C00000001") == before
