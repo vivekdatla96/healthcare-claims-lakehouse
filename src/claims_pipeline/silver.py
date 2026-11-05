@@ -140,8 +140,9 @@ def apply_members_scd2(con: duckdb.DuckDBPyConnection, salt: str) -> SilverResul
         {token_sql('member_id', SALT_SQL)} AS member_token,
         {birth_year_sql('date_of_birth')} AS birth_year,
         gender, {zip3_sql('zip_code')} AS zip3, state, plan_code, _op, _seq, _ts,
-        md5(concat_ws('|', year(date_of_birth), gender, left(zip_code, 3), state, plan_code))
-            AS attr_hash"""
+        md5(concat_ws('|', {birth_year_sql('date_of_birth')}, gender, {zip3_sql('zip_code')},
+                      state, plan_code))
+            AS attr_hash"""  # hash only generalized values, or it would leak the raw zip3
     total = 0
     for until in _pending_batch_bounds(con, "members", since):
         n, since = _stage_latest(con, "members", "member_id", select_sql, since, until)
