@@ -1,8 +1,9 @@
 from collections import Counter
 
 from claims_pipeline.ingest import ingest_landing
+from claims_pipeline.phi import tokenize
 from claims_pipeline.quality import run_checks
-from claims_pipeline.silver import build_silver
+from claims_pipeline.silver import build_silver, migrate_member_generalization
 
 from .conftest import SALT, land
 
@@ -65,3 +66,33 @@ def test_no_raw_phi_in_silver_and_quality_passes(con, source, landing):
     _run(con, landing)
     results = run_checks(con)
     assert all(r["passed"] for r in results if r["severity"] == "error")
+
+
+def test_member_history_from_before_zip3_masking_is_migrated(con, source, landing):
+    land(landing, 0, source.snapshot(20, 4, 40))
+    _run(con, landing)
+    member_id = con.execute("SELECT min(member_id) FROM bronze.members").fetchall()[0][0]
+    token = tokenize(member_id, SALT)
+    # Recreate the member as the old code stored it: a restricted prefix kept raw
+    # and hashed raw.
+    con.execute("UPDATE bronze.members SET zip_code = '03601' WHERE member_id = ?", [member_id])
+    con.execute("""
+        UPDATE silver.member_history
+        SET zip3 = '036',
+            attr_hash = md5(concat_ws('|', birth_year, gender, '036', state, plan_code))
+        WHERE member_token = ?""", [token])
+    versions = con.execute("SELECT count(*) FROM silver.member_history").fetchall()[0][0]
+
+    assert migrate_member_generalization(con) == 1
+    assert migrate_member_generalization(con) == 0
+    assert con.execute("SELECT zip3 FROM silver.member_history WHERE member_token = ?",
+                       [token]).fetchall()[0][0] == "000"
+
+    # Replay an unchanged update for that member: it must not open a new version.
+    con.execute("""
+        INSERT INTO bronze.members
+        SELECT * REPLACE ('U' AS _op, (SELECT max(_seq) + 1 FROM bronze.members) AS _seq,
+                          'replay.jsonl' AS _source_file)
+        FROM bronze.members WHERE member_id = ? ORDER BY _seq DESC LIMIT 1""", [member_id])
+    build_silver(con, SALT)
+    assert con.execute("SELECT count(*) FROM silver.member_history").fetchall()[0][0] == versions
