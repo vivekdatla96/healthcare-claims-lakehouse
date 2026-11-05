@@ -53,7 +53,7 @@ Direct identifiers never leave bronze:
 
 The salt comes from `CLAIMS_PHI_SALT` (in production: Key Vault / Secrets Manager). Without it
 the pipeline falls back to a public dev salt and logs a warning, because tokens made with a known
-salt can be reversed by hashing candidate member IDs. With `CLAIMS_ENV=prod` a missing salt stops
+salt can be reversed by hashing candidate member IDs. With `CLAIMS_ENV=prod` a missing or dev salt stops
 the run. Two separate tests, one in Python and one in dbt, fail the build if an identifier column
 ever appears downstream, and a dbt test fails if gold exposes a birth year for anyone aged 90+.
 
